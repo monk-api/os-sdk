@@ -27,5 +27,8 @@
     "engines": {
         "bun": ">=1.0.0"
     },
-    "peerDependencies": {}
+    "peerDependencies": {},
+    "dependencies": {
+        "msgpackr": "^1.11.5"
+    }
 }

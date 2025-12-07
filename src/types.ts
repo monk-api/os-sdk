@@ -100,11 +100,11 @@ export interface ItemResponse extends BaseResponse {
 }
 
 /**
- * Binary data response (base64 encoded).
+ * Binary data response.
  */
 export interface DataResponse extends BaseResponse {
     op: 'data';
-    bytes: string;
+    bytes: Uint8Array;
 }
 
 /**

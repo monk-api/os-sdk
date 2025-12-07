@@ -44,7 +44,7 @@ describe('types', () => {
         });
 
         test('data is not terminal', () => {
-            const response: DataResponse = { id: '1', op: 'data', bytes: 'SGVsbG8=' };
+            const response: DataResponse = { id: '1', op: 'data', bytes: new Uint8Array([72, 101, 108, 108, 111]) };
             expect(isTerminal(response)).toBe(false);
         });
 
@@ -105,14 +105,14 @@ describe('types', () => {
         });
 
         test('returns false for data response', () => {
-            const response: DataResponse = { id: '1', op: 'data', bytes: 'dGVzdA==' };
+            const response: DataResponse = { id: '1', op: 'data', bytes: new Uint8Array([116, 101, 115, 116]) };
             expect(isItem(response)).toBe(false);
         });
     });
 
     describe('isData', () => {
         test('returns true for data response', () => {
-            const response: DataResponse = { id: '1', op: 'data', bytes: 'SGVsbG8gV29ybGQ=' };
+            const response: DataResponse = { id: '1', op: 'data', bytes: new Uint8Array([72, 101, 108, 108, 111]) };
             expect(isData(response)).toBe(true);
         });
 

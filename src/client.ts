@@ -155,8 +155,8 @@ export class OSClient {
             }
 
             if (isData(response)) {
-                // Decode base64 to Uint8Array
-                yield Buffer.from(response.bytes, 'base64') as unknown as T;
+                // Binary data comes directly as Uint8Array (msgpack handles it natively)
+                yield response.bytes as unknown as T;
             }
 
             // ok/done/redirect are terminal - handled by transport
@@ -207,7 +207,8 @@ export class OSClient {
             }
 
             if (isData(response)) {
-                chunks.push(Buffer.from(response.bytes, 'base64'));
+                // Binary data comes directly as Uint8Array (msgpack handles it natively)
+                chunks.push(response.bytes);
             }
         }
 
@@ -228,15 +229,14 @@ export class OSClient {
      * Write to file descriptor.
      *
      * Binary data is sent as { data: Uint8Array } which the kernel expects.
-     * However, JSON serialization loses Uint8Array type, so we send as
-     * { data: Array<number> } which needs gateway/kernel support.
+     * MessagePack handles Uint8Array natively, so no encoding needed.
      *
      * @returns Number of bytes written
      */
     async write(fd: number, data: Uint8Array | string): Promise<number> {
         const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-        // Send as { data: [...] } - array of numbers survives JSON serialization
-        const result = await this.call<{ written: number }>('file:write', fd, { data: Array.from(bytes) });
+        // Send Uint8Array directly - msgpack handles binary natively
+        const result = await this.call<{ written: number }>('file:write', fd, { data: bytes });
 
         return result.written;
     }

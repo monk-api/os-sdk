@@ -1,12 +1,13 @@
 /**
  * Transport - Low-level Unix socket communication
  *
- * Handles connection management, message framing (newline-delimited JSON),
+ * Handles connection management, message framing (length-prefixed MessagePack),
  * and request/response correlation.
  *
  * @module transport
  */
 
+import { pack, unpack } from 'msgpackr';
 import type { Request, Response, ConnectOptions, ConnectionState } from './types.js';
 import { isTerminal } from './types.js';
 import { ConnectionError, TimeoutError } from './error.js';
@@ -19,7 +20,7 @@ import { ConnectionError, TimeoutError } from './error.js';
  * Socket data stored per connection.
  */
 interface SocketData {
-    buffer: string;
+    buffer: Uint8Array;
 }
 
 /**
@@ -64,7 +65,7 @@ interface PendingRequest {
  *
  * Handles:
  * - Unix socket connection lifecycle
- * - Newline-delimited JSON framing
+ * - Length-prefixed MessagePack framing
  * - Request/response correlation by ID
  * - Streaming responses (multiple items before done)
  *
@@ -96,9 +97,6 @@ export class Transport {
 
     /** Request ID counter */
     private nextId = 1;
-
-    /** Text encoder for socket writes */
-    private readonly encoder = new TextEncoder();
 
     // =========================================================================
     // PUBLIC ACCESSORS
@@ -167,7 +165,7 @@ export class Transport {
 
             Bun.connect<SocketData>({
                 unix: socketPath,
-                data: { buffer: '' },
+                data: { buffer: new Uint8Array(0) },
                 socket: {
                     data: (socket, data) => {
                         this.onData(socket, data);
@@ -252,11 +250,9 @@ export class Transport {
 
             this.pending.set(request.id, pending);
 
-            // Send request as JSON line
-            const line = JSON.stringify(request) + '\n';
-
+            // Send request as length-prefixed msgpack
             try {
-                this.socket!.write(this.encoder.encode(line));
+                this.socket!.write(this.encodeFrame(request));
             }
             catch (err) {
                 this.pending.delete(request.id);
@@ -268,6 +264,20 @@ export class Transport {
                 reject(new ConnectionError('EIO', (err as Error).message));
             }
         });
+    }
+
+    /**
+     * Encode a message as a length-prefixed msgpack frame.
+     */
+    private encodeFrame(message: unknown): Uint8Array {
+        const payload = pack(message);
+        const frame = new Uint8Array(4 + payload.length);
+        const view = new DataView(frame.buffer);
+
+        view.setUint32(0, payload.length);
+        frame.set(payload, 4);
+
+        return frame;
     }
 
     /**
@@ -336,10 +346,8 @@ export class Transport {
         };
 
         try {
-            // Send request
-            const line = JSON.stringify(request) + '\n';
-
-            this.socket!.write(this.encoder.encode(line));
+            // Send request as length-prefixed msgpack
+            this.socket!.write(this.encodeFrame(request));
 
             // Iterate responses
             while (!done && !error) {
@@ -389,25 +397,38 @@ export class Transport {
      * Handle incoming data from socket.
      */
     private onData(socket: BunSocket, data: Buffer): void {
-        socket.data.buffer += data.toString();
+        // Append to binary buffer
+        const newBuffer = new Uint8Array(socket.data.buffer.length + data.length);
 
-        // Process complete lines
-        let newlineIdx: number;
+        newBuffer.set(socket.data.buffer);
+        newBuffer.set(new Uint8Array(data), socket.data.buffer.length);
+        socket.data.buffer = newBuffer;
 
-        while ((newlineIdx = socket.data.buffer.indexOf('\n')) !== -1) {
-            const line = socket.data.buffer.slice(0, newlineIdx);
+        // Process complete messages (4-byte length prefix + payload)
+        while (socket.data.buffer.length >= 4) {
+            const view = new DataView(
+                socket.data.buffer.buffer,
+                socket.data.buffer.byteOffset,
+            );
+            const msgLength = view.getUint32(0);
 
-            socket.data.buffer = socket.data.buffer.slice(newlineIdx + 1);
+            // Wait for complete message
+            if (socket.data.buffer.length < 4 + msgLength) {
+                break;
+            }
 
-            if (line.trim()) {
-                try {
-                    const response = JSON.parse(line) as Response;
+            // Extract and decode message
+            const payload = socket.data.buffer.slice(4, 4 + msgLength);
 
-                    this.onResponse(response);
-                }
-                catch {
-                    // Invalid JSON - ignore
-                }
+            socket.data.buffer = socket.data.buffer.slice(4 + msgLength);
+
+            try {
+                const response = unpack(payload) as Response;
+
+                this.onResponse(response);
+            }
+            catch {
+                // Invalid msgpack - ignore
             }
         }
     }
